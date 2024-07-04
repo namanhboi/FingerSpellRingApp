@@ -3,10 +3,16 @@ package com.example.scifilabring.ui
 import AutoCorrect
 import GenerateJSONFiles
 import android.app.Application
+import android.os.Build
+import android.speech.tts.TextToSpeech
 import android.util.Log
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.scifilabring.R
+import com.example.scifilabring.SpeechSynthesis.Emotion
+import com.example.scifilabring.SpeechSynthesis.SpeechSynthesis
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -21,16 +27,28 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.Locale
 import kotlin.coroutines.cancellation.CancellationException
 
 class ScifiLabRingViewModel(application: Application) : AndroidViewModel(application) {
     private val _scifiLabRingState: MutableStateFlow<ScifiLabRingState> =
         MutableStateFlow(ScifiLabRingState())
     val scifiLabRingState = _scifiLabRingState.asStateFlow()
-
+//    private val textToSpeechEngine: TextToSpeech by lazy {
+//        TextToSpeech(application,
+//            TextToSpeech.OnInitListener { status ->
+//                // set our locale only if init was success.
+//                if (status == TextToSpeech.SUCCESS) {
+//                    textToSpeechEngine.language = Locale.UK
+//                }
+//            })
+//    }
+    // Now using Azure tts
     init {
         loadData(application)
         getLatestWord()
+        //textToSpeechEngine.speak("Have to put 1 input in for tts to work", TextToSpeech.QUEUE_FLUSH, null, "tts1")
+
     }
 
     val auto: AutoCorrect =
@@ -86,23 +104,50 @@ class ScifiLabRingViewModel(application: Application) : AndroidViewModel(applica
 
         _scifiLabRingState.update { currentState ->
             currentState.copy(
-                threeSuggestions = threeSuggestions
+                threeWordSuggestions = threeSuggestions
             )
         }
     }
 
-    fun onClickSuggestion(index: Int) {
-        if (index >= _scifiLabRingState.value.threeSuggestions.size) return
-        val suggestion : String = _scifiLabRingState.value.threeSuggestions[index]
+    fun onClickWordSuggestion(index: Int) {
+        if (index >= _scifiLabRingState.value.threeWordSuggestions.size) return
+        val suggestion : String = _scifiLabRingState.value.threeWordSuggestions[index]
+        //textToSpeechEngine.speak(suggestion, TextToSpeech.QUEUE_FLUSH, null, "tts1")
         _scifiLabRingState.update { currentState ->
             currentState.copy(
                 currentText = "${_scifiLabRingState.value.currentText} $suggestion",
-                previousWord = _scifiLabRingState.value.input,
+                previousInputWord = _scifiLabRingState.value.input,
                 previousSuggestion = suggestion,
+                wordToSpeak = suggestion,
                 input = ""
             )
         }
+        //textToSpeechEngine.speak(_scifiLabRingState.value.previousSuggestion, TextToSpeech.QUEUE_FLUSH, null, "tts1")
     }
+
+    /** How does sending an emotion work?
+     * Send the current word along with the selected emotion.
+     * This is where the AzureTTS is invoked, sends the previousSuggestion and
+     * threeEmotionSuggestion[index] to api*/
+    fun onClickEmotionSuggestion(index : Int) {
+        if (index >= _scifiLabRingState.value.threeEmotionSuggestions.size || index < 0) return
+        if (_scifiLabRingState.value.wordToSpeak == "") {
+            return
+        }
+        val emotionSuggestion : Emotion = _scifiLabRingState.value.threeEmotionSuggestions[index]
+        _scifiLabRingState.update { currentState ->
+            currentState.copy(
+                previousAddedEmotion = emotionSuggestion
+            )
+        }
+        AzureTTS(_scifiLabRingState.value.wordToSpeak, _scifiLabRingState.value.previousAddedEmotion)
+        _scifiLabRingState.update { currentState ->
+            currentState.copy(
+                wordToSpeak = ""
+            )
+        }
+    }
+
 
     fun onClickDelete() {
         if (_scifiLabRingState.value.input.length > 0) {
@@ -119,10 +164,15 @@ class ScifiLabRingViewModel(application: Application) : AndroidViewModel(applica
             _scifiLabRingState.update { currentState ->
                 currentState.copy(
                     currentText = "${_scifiLabRingState.value.currentText} ${_scifiLabRingState.value.input}",
-                    previousWord = _scifiLabRingState.value.input,
+                    previousInputWord = _scifiLabRingState.value.input,
+                    previousSuggestion = "",
+                    wordToSpeak = _scifiLabRingState.value.input,
                     input = ""
                 )
             }
+            // Call Lollipop+ function
+            //textToSpeechEngine.speak(_scifiLabRingState.value.previousWord, TextToSpeech.QUEUE_FLUSH, null, "tts1")
+            //AzureTTS(_scifiLabRingState.value.previousWord, Emotion.Cheerful)
         }
     }
     fun onKeyboardValueChange(newInput : String) {
@@ -142,8 +192,6 @@ class ScifiLabRingViewModel(application: Application) : AndroidViewModel(applica
         val reg = Regex("[a-z]+")
         return reg.find(_scifiLabRingState.value.input)?.value ?: ""
     }
-
-
 
     private fun getLatestWord(){
         viewModelScope.launch(Dispatchers.IO) {
@@ -171,5 +219,7 @@ class ScifiLabRingViewModel(application: Application) : AndroidViewModel(applica
             }
         }
     }
-
+    fun AzureTTS(text : String, emotion : Emotion) {
+        SpeechSynthesis.textToSpeech(text, emotion)
+    }
 }
